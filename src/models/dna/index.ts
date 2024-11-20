@@ -1,6 +1,20 @@
 import * as THREE from "three";
 import { createNoise4D } from "simplex-noise";
 
+function vector3ArrayToFloat32BufferAttribute(arr: THREE.Vector3[]) {
+  const buffer = [];
+  for (let i = 0; i < arr.length; i++) {
+    const vector = arr[i].normalize();
+    buffer.push(vector.x, vector.y, vector.z);
+  }
+
+  return new THREE.Float32BufferAttribute(buffer, 3);
+}
+
+function ease(x: number): number {
+  return x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
+}
+
 class DNAPath {
   private readonly points: THREE.Vector3[];
   private readonly getNoise: ReturnType<typeof createNoise4D>;
@@ -8,15 +22,31 @@ class DNAPath {
   private readonly divisions: number;
   private readonly camera: THREE.PerspectiveCamera;
 
+  private visible: boolean;
+  private visibilityOffset: number;
+  private lastTimestamp: number;
+
   constructor(divisions: number, camera: THREE.PerspectiveCamera) {
     this.divisions = divisions;
     this.camera = camera;
+
+    this.visible = true;
+    this.visibilityOffset = 1;
+    this.lastTimestamp = 0;
 
     this.points = this.subdividePoints([
       new THREE.Vector3(0, 0, 0),
       new THREE.Vector3(0, -150, 0),
     ]);
     this.getNoise = createNoise4D();
+  }
+
+  hide() {
+    this.visible = false;
+  }
+
+  show() {
+    this.visible = true;
   }
 
   subdividePoints(points: THREE.Vector3[]) {
@@ -32,7 +62,11 @@ class DNAPath {
         point.z / 100,
         t
       );
-      const noiseVector = new THREE.Vector3(15 * noiseValue, 0, 0);
+      const noiseVector = new THREE.Vector3(
+        15 * noiseValue + -30 * ease(this.visibilityOffset),
+        0,
+        0
+      );
 
       return point.clone().add(noiseVector);
     });
@@ -46,11 +80,27 @@ class DNAPath {
 
       const offsetN = Math.pow((100 - dist) / 50, 3);
 
-      return point.clone().setX(point.x + 30 * offsetN);
+      return point
+        .clone()
+        .setX(point.x + 30 * offsetN + -60 * ease(this.visibilityOffset));
     });
   }
 
+  updateVisibility(timeElapsed: number) {
+    const t = (timeElapsed - this.lastTimestamp) * 10;
+
+    if (this.visible && this.visibilityOffset > 0) {
+      this.visibilityOffset = this.visibilityOffset - t;
+    } else if (!this.visible && this.visibilityOffset < 1) {
+      this.visibilityOffset = this.visibilityOffset + t;
+    }
+
+    this.lastTimestamp = timeElapsed;
+  }
+
   getPoints(timeElapsed: number) {
+    this.updateVisibility(timeElapsed);
+
     const pointsWithCameraAttraction = this.applyCameraAttraction(this.points);
     const pointsWithNoise = this.applyNoise(
       pointsWithCameraAttraction,
@@ -64,13 +114,15 @@ class DNAPath {
 const vertexShader = `
   varying vec3 vUv; 
   varying vec3 vPosition; 
+  varying vec3 vNormal;
 
   void main() {
-    vUv = position; 
     vec4 modelViewPosition = modelViewMatrix * vec4(position, 1.0);
     gl_Position = projectionMatrix * modelViewPosition; 
-
+    
+    vUv = position; 
     vPosition = (modelMatrix * vec4(position, 1.0)).xyz;
+    vNormal = normal;
   }
 `;
 
@@ -81,11 +133,15 @@ const fragmentShader = `
 
   varying vec3 vUv;
   varying vec3 vPosition;
+  varying vec3 vNormal;
   
   void main() {
     float z = min(1.0, max(vPosition.z / 2.0 + 1., 0.0));
-    
-    gl_FragColor = vec4(mix(colorDark, colorLight, z ).xyz, 1.0);
+
+    vec3 lightColor = mix(colorLight, colorHighlight, smoothstep(1.0, 0.5, vNormal.z));
+    vec3 darkColor = mix(colorDark, colorHighlight, smoothstep(1.0, 0.5, vNormal.z));
+
+    gl_FragColor = vec4(mix(darkColor, lightColor, z).xyz, 1.0);
   }
 `;
 
@@ -93,6 +149,9 @@ class DNA {
   private readonly radius: number;
   private readonly density: number;
   private readonly length: number;
+  private readonly sphereRadius: number;
+  private readonly tubeRadius: number;
+
   private readonly path: DNAPath;
   private readonly materialGreen: THREE.LineBasicMaterial;
   private readonly materialRed: THREE.LineBasicMaterial;
@@ -107,6 +166,8 @@ class DNA {
     this.radius = 5;
     this.density = 0.8;
     this.length = 100;
+    this.tubeRadius = 0.2;
+    this.sphereRadius = 0.6;
     this.path = new DNAPath(100, camera);
 
     this.materialGreen = new THREE.LineBasicMaterial({ color: 0x00ff00 });
@@ -120,35 +181,25 @@ class DNA {
     this.connectionLines = [];
   }
 
-  hide() {}
+  hide() {
+    this.path.hide();
+  }
 
-  show() {}
+  show() {
+    this.path.show();
+  }
 
   render(scene: THREE.Scene) {
-    // const material = new THREE.MeshPhongMaterial({
-    //   color: 0xffffff,
-    //   emissive: 0x0000ff,
-    //   depthTest: true,
-    //   depthWrite: true,
-    // });
-
     const material = new THREE.ShaderMaterial({
       uniforms: {
-        colorHighlight: { value: new THREE.Color(0xff0000) },
+        colorHighlight: { value: new THREE.Color(0xd4dcff) },
         colorLight: { value: new THREE.Color(0xffffff) },
-        colorDark: { value: new THREE.Color(0xaaaaaa) },
+        colorDark: { value: new THREE.Color(0x7bc2ed) },
       },
       vertexShader,
       fragmentShader,
       depthTest: true,
-      // depthWrite: false,
-      // transparent: true,
-      // vertexColors: true,
     });
-
-    // const material = new THREE.MeshBasicMaterial({
-    //   color: 0xffffff,
-    // });
 
     // Get the points from the DNA path
     const points = this.path.getPoints(0);
@@ -180,7 +231,11 @@ class DNA {
       rightCurvePoints.push(rightCurvePoint);
 
       // Spheres
-      const sphereGeometry = new THREE.SphereGeometry(0.4, 32, 16);
+      const sphereGeometry = new THREE.SphereGeometry(
+        this.sphereRadius,
+        32,
+        16
+      );
       const sphereLeft = new THREE.Mesh(sphereGeometry, material);
       const sphereRight = sphereLeft.clone();
 
@@ -190,18 +245,23 @@ class DNA {
       leftCurveSpheres.push(sphereLeft);
       rightCurveSpheres.push(sphereRight);
 
+      sphereLeft.geometry.computeVertexNormals();
+      sphereRight.geometry.computeVertexNormals();
+
       scene.add(sphereLeft, sphereRight);
 
       // Connection lines
       const connectionLineGeometry = new THREE.TubeGeometry(
         new THREE.CatmullRomCurve3([leftCurvePoint, rightCurvePoint]),
         1,
-        0.25,
+        this.tubeRadius,
         4,
         false
       );
 
       const connectionLine = new THREE.Mesh(connectionLineGeometry, material);
+      connectionLine.geometry.computeVertexNormals();
+
       connectionLines.push(connectionLine);
 
       scene.add(connectionLine);
@@ -210,7 +270,7 @@ class DNA {
     const leftCurveGeometry = new THREE.TubeGeometry(
       new THREE.CatmullRomCurve3(leftCurvePoints),
       this.length,
-      0.125,
+      this.tubeRadius,
       4,
       false
     );
@@ -218,7 +278,7 @@ class DNA {
     const rightCurveGeometry = new THREE.TubeGeometry(
       new THREE.CatmullRomCurve3(rightCurvePoints),
       this.length,
-      0.125,
+      this.tubeRadius,
       4,
       false
     );
@@ -273,7 +333,7 @@ class DNA {
       this.connectionLines[i].geometry = new THREE.TubeGeometry(
         new THREE.CatmullRomCurve3([leftCurvePoint, rightCurvePoint]),
         1,
-        0.125,
+        this.tubeRadius,
         4,
         false
       );
@@ -283,21 +343,32 @@ class DNA {
     this.leftCurveLine.geometry = new THREE.TubeGeometry(
       new THREE.CatmullRomCurve3(leftCurvePoints),
       this.length,
-      0.125,
+      this.tubeRadius,
       4,
       false
     );
-    this.leftCurveLine.geometry.computeVertexNormals();
+
+    console.log(this.leftCurveLine);
+    // this.leftCurveLine.geometry.computeVertexNormals();
+
+    // this.leftCurveLine.geometry.setAttribute(
+    //   "normals",
+    //   vector3ArrayToFloat32BufferAttribute(this.leftCurveLine.geometry.normals)
+    // );
 
     this.rightCurveLine.geometry.dispose();
     this.rightCurveLine.geometry = new THREE.TubeGeometry(
       new THREE.CatmullRomCurve3(rightCurvePoints),
       this.length,
-      0.125,
+      this.tubeRadius,
       4,
       false
     );
-    this.rightCurveLine.geometry.computeVertexNormals();
+    // this.rightCurveLine.geometry.computeVertexNormals();
+    // this.rightCurveLine.geometry.setAttribute(
+    //   "normals",
+    //   vector3ArrayToFloat32BufferAttribute(this.rightCurveLine.geometry.normals)
+    // );
 
     // updateCurveLines()
   }

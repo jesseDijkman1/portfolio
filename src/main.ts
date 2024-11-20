@@ -20,9 +20,6 @@ renderer.setSize(width, height);
 renderer.setAnimationLoop(animate);
 document.body.appendChild(renderer.domElement);
 
-var light = new THREE.DirectionalLight(0xffffff);
-light.position.set(-1, 0, 0).normalize();
-scene.add(light);
 const dna = new DNA(camera);
 
 dna.render(scene);
