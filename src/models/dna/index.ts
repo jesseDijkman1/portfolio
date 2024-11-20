@@ -74,7 +74,8 @@ class DNAPath {
 
       return point
         .clone()
-        .setX(point.x + 30 * offsetN + -60 * ease(this.visibilityOffset));
+        .setX(point.x + 30 * offsetN + -60 * ease(this.visibilityOffset))
+        .setZ(point.z + 10 * offsetN + -20 * ease(this.visibilityOffset));
     });
   }
 
@@ -186,8 +187,10 @@ const particlesFragmentShader = `
 
   void main() {
     if ( length( gl_PointCoord - vec2( 0.5, 0.5 ) ) > 0.475 ) discard;
+
     float n = noise(vec3(vPosition.xz, 1.0));
     float t = 1.0 - length( gl_PointCoord - vec2( 0.5, 0.5 ));
+    
 
     vec3 Col = mix(vColor, vec3(1.0,1.0,1.0), pow(t, 8.));
 
@@ -249,7 +252,7 @@ class DNAParticles {
   render(scene: THREE.Scene) {
     const points = this.path.getPoints(0);
     const curve = new THREE.CatmullRomCurve3(points);
-    const amount = 100;
+    const amount = 300;
 
     for (let i = 0; i < amount; i++) {
       const angle = (Math.PI / 12) * i;
@@ -268,11 +271,11 @@ class DNAParticles {
         zOffset: 40 - Math.random() * 80,
         xOffset: 40 - Math.random() * 80,
         speed: Math.random(),
-        size: 5,
+        size: 5 * Math.random() + 1,
       });
     }
 
-    console.log(this.particles);
+    // console.log(this.particles);
 
     scene.add(this.points);
   }
@@ -359,7 +362,7 @@ const fragmentShader = `
   varying vec3 vNormal;
   
   void main() {
-    float z = min(1.0, max(vPosition.z / 2.0 + 1., 0.0));
+    float z = min(1.0, max(vPosition.z / 2.0 - 3., 0.0));
 
     vec3 lightColor = mix(colorLight, colorHighlight, smoothstep(1.0, 0.0, pow(vNormal.z, 2.0)));
     vec3 darkColor = mix(colorDark, colorHighlight,  smoothstep(0.3, 0.1, vNormal.z));
@@ -491,7 +494,7 @@ class DNA {
         new THREE.CatmullRomCurve3([leftCurvePoint, rightCurvePoint]),
         1,
         this.tubeRadius,
-        4,
+        8,
         false
       );
 
@@ -572,7 +575,7 @@ class DNA {
         new THREE.CatmullRomCurve3([leftCurvePoint, rightCurvePoint]),
         1,
         this.tubeRadius,
-        4,
+        16,
         false
       );
     }
@@ -582,7 +585,7 @@ class DNA {
       new THREE.CatmullRomCurve3(leftCurvePoints),
       this.length,
       this.tubeRadius,
-      4,
+      16,
       false
     );
 
@@ -591,7 +594,7 @@ class DNA {
       new THREE.CatmullRomCurve3(rightCurvePoints),
       this.length,
       this.tubeRadius,
-      4,
+      16,
       false
     );
 

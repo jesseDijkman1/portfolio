@@ -1,8 +1,16 @@
 import "./style.css";
+import { createNoise4D } from "simplex-noise";
 
 import * as THREE from "three";
 
-import DNA from "./models/dna";
+import CurvePath from "./models/CurvePath";
+import DNA from "./models/DNA";
+
+import { getDistance2D, ease, getScrollProgression } from "./lib/utils";
+
+const getNoise4D = createNoise4D();
+
+const section = document.getElementById("section");
 
 const width = window.innerWidth,
   height = window.innerHeight;
@@ -20,24 +28,57 @@ renderer.setSize(width, height);
 renderer.setAnimationLoop(animate);
 document.body.appendChild(renderer.domElement);
 
-const dna = new DNA(camera);
+const curvePath = new CurvePath(
+  [new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, -150, 0)],
+  10
+);
+
+curvePath.addPointsTransformer("gravitateToCamera", (point, state) => {
+  const dist = getDistance2D(point, camera.position);
+  const offsetN = Math.pow((100 - dist) / 50, 3);
+  console.log("F", state.stateTransferProgress);
+  return point
+    .setX(point.x + 30 * offsetN * state.stateTransferProgress)
+    .setZ(point.z + 10 * offsetN * state.stateTransferProgress);
+});
+
+curvePath.addPointsTransformer("applyNoiseX", (point, state) => {
+  const noiseValue = getNoise4D(
+    point.x / 100,
+    point.y / 100,
+    point.z / 100,
+    state.timeElapsed
+  );
+
+  return point.setX(point.x + 15 * noiseValue * state.stateTransferProgress);
+});
+
+curvePath.definePipeline("start", ["gravitateToCamera", "applyNoiseX"], true);
+curvePath.definePipeline("noise", ["applyNoiseX"]);
+curvePath.definePipeline("none", []);
+
+const dna = new DNA(curvePath);
 
 dna.render(scene);
 
-const scrollPercent = () => {
-  const bodyST = document.body.scrollTop;
-  const docST = document.documentElement.scrollTop;
-  const docSH = document.documentElement.scrollHeight;
-  const docCH = document.documentElement.clientHeight;
-
-  return (docST + bodyST) / (docSH - docCH);
+let a = true;
+window.onclick = () => {
+  a = !a;
+  if (a) {
+    curvePath.setPipeline("start");
+  } else {
+    curvePath.setPipeline("none");
+  }
 };
 
 function animate(time: number) {
-  const s = scrollPercent();
+  const s = getScrollProgression();
 
   camera.position.y = -40 - s * 50;
 
+  // dna.update(time);
+
+  curvePath.update(time / 10000);
   dna.update(time);
 
   renderer.render(scene, camera);
