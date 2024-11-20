@@ -4,6 +4,8 @@ import { createNoise4D } from "simplex-noise";
 function ease(x: number): number {
   return x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
 }
+// new THREE.Color(0xd4dcff)
+const mainColor = new THREE.Color(0x80ffc8);
 
 class DNAPath {
   private readonly points: THREE.Vector3[];
@@ -138,8 +140,8 @@ const particlesVertexShader = `
   void main() {
     vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
 
-    float n = noise(vec3(mvPosition.xz, time));
-    gl_PointSize = size * n * ( 100.0 / -mvPosition.z ) ;
+    // float n = noise(vec3(position.xz, time));
+    gl_PointSize = size  * ( 100.0 / -mvPosition.z ) ;
     gl_Position = projectionMatrix * mvPosition;
   
     
@@ -184,8 +186,12 @@ const particlesFragmentShader = `
 
   void main() {
     if ( length( gl_PointCoord - vec2( 0.5, 0.5 ) ) > 0.475 ) discard;
-    float n = noise(vec3(vPosition.xz, time));
-    gl_FragColor = vec4(vColor, n );
+    float n = noise(vec3(vPosition.xz, 1.0));
+    float t = 1.0 - length( gl_PointCoord - vec2( 0.5, 0.5 ));
+
+    vec3 Col = mix(vColor, vec3(1.0,1.0,1.0), pow(t, 8.));
+
+    gl_FragColor = vec4(Col, pow(t, 4.) );
   }
 `;
 
@@ -194,12 +200,18 @@ class DNAParticles {
     position: THREE.Vector3;
     color: THREE.Color;
     size: number;
+    zOffset: number;
+    xOffset: number;
+    speed: number;
   }>;
   private readonly geometry: THREE.BufferGeometry;
   private readonly material: THREE.ShaderMaterial;
   private readonly points: THREE.Points;
 
-  constructor() {
+  private readonly path: DNAPath;
+
+  constructor(path: DNAPath) {
+    this.path = path;
     this.particles = [];
 
     this.geometry = new THREE.BufferGeometry();
@@ -234,11 +246,34 @@ class DNAParticles {
     // this.scene.add(this.points);
   }
 
-  createParticle(position: THREE.Vector3, color: THREE.Color) {
-    this.particles.push({ position, color, size: 5 });
-  }
-
   render(scene: THREE.Scene) {
+    const points = this.path.getPoints(0);
+    const curve = new THREE.CatmullRomCurve3(points);
+    const amount = 100;
+
+    for (let i = 0; i < amount; i++) {
+      const angle = (Math.PI / 12) * i;
+      const curveIndex = i / amount;
+      const curvePointPosition = curve.getPointAt(curveIndex);
+      const curvePointTangent = curve.getTangentAt(curveIndex);
+
+      const quaternion = new THREE.Quaternion();
+      quaternion.setFromAxisAngle(curvePointTangent, angle);
+
+      const particlePosition = curvePointPosition.clone();
+
+      this.particles.push({
+        position: particlePosition,
+        color: mainColor,
+        zOffset: 40 - Math.random() * 80,
+        xOffset: 40 - Math.random() * 80,
+        speed: Math.random(),
+        size: 5,
+      });
+    }
+
+    console.log(this.particles);
+
     scene.add(this.points);
   }
 
@@ -247,8 +282,29 @@ class DNAParticles {
     const colors: number[] = [];
     const sizes: number[] = [];
 
+    const points = this.path.getPoints(0);
+    const curve = new THREE.CatmullRomCurve3(points);
+
     for (let i = 0; i < this.particles.length; i++) {
-      const { position, color, size } = this.particles[i];
+      const { position, color, size, zOffset, xOffset, speed } =
+        this.particles[i];
+      const curveIndex = i / this.particles.length;
+      const curvePointPosition = curve.getPointAt(curveIndex);
+      const curvePointTangent = curve.getTangentAt(curveIndex);
+
+      const quaternion = new THREE.Quaternion();
+      quaternion.setFromAxisAngle(
+        curvePointTangent,
+        timeElapsed / (10000 - 8000 * speed)
+      );
+
+      const particlePosition = curvePointPosition
+        .clone()
+        .add(
+          new THREE.Vector3(xOffset, 0, zOffset).applyQuaternion(quaternion)
+        );
+
+      this.particles[i].position = particlePosition;
 
       positions.push(position.x, position.y, position.z);
       colors.push(color.r, color.g, color.b);
@@ -305,8 +361,8 @@ const fragmentShader = `
   void main() {
     float z = min(1.0, max(vPosition.z / 2.0 + 1., 0.0));
 
-    vec3 lightColor = mix(colorLight, colorHighlight, smoothstep(1.0, 0.5, vNormal.z));
-    vec3 darkColor = mix(colorDark, colorHighlight,  smoothstep(1.0, 0.5, z));
+    vec3 lightColor = mix(colorLight, colorHighlight, smoothstep(1.0, 0.0, pow(vNormal.z, 2.0)));
+    vec3 darkColor = mix(colorDark, colorHighlight,  smoothstep(0.3, 0.1, vNormal.z));
 
     gl_FragColor = vec4(mix(darkColor, lightColor, z).xyz, 1.0);
   }
@@ -339,7 +395,7 @@ class DNA {
     this.sphereRadius = 0.6;
 
     this.path = new DNAPath(100, camera);
-    this.particles = new DNAParticles();
+    this.particles = new DNAParticles(this.path);
 
     this.materialGreen = new THREE.LineBasicMaterial({ color: 0x00ff00 });
     this.materialRed = new THREE.LineBasicMaterial({ color: 0xff0000 });
@@ -363,9 +419,9 @@ class DNA {
   render(scene: THREE.Scene) {
     const material = new THREE.ShaderMaterial({
       uniforms: {
-        colorHighlight: { value: new THREE.Color(0xd4dcff) },
+        colorHighlight: { value: mainColor },
         colorLight: { value: new THREE.Color(0xffffff) },
-        colorDark: { value: new THREE.Color(0x7bc2ed) },
+        colorDark: { value: new THREE.Color(0x000000) },
       },
       vertexShader,
       fragmentShader,
@@ -391,14 +447,14 @@ class DNA {
       const quaternion = new THREE.Quaternion();
       quaternion.setFromAxisAngle(curvePointTangent, angle);
 
-      this.particles.createParticle(
-        new THREE.Vector3(
-          0,
-          curvePointPosition.y,
-          Math.random() * 100
-        ).applyQuaternion(quaternion),
-        new THREE.Color(0xffffff)
-      );
+      // this.particles.createParticle(
+      //   new THREE.Vector3(
+      //     0,
+      //     curvePointPosition.y,
+      //     Math.random() * 100
+      //   ).applyQuaternion(quaternion),
+      //   new THREE.Color(0xffffff)
+      // );
 
       const leftCurvePoint = curvePointPosition
         .clone()
@@ -445,9 +501,9 @@ class DNA {
       connectionLines.push(connectionLine);
 
       scene.add(connectionLine);
-
-      this.particles.render(scene);
     }
+
+    this.particles.render(scene);
 
     const leftCurveGeometry = new THREE.TubeGeometry(
       new THREE.CatmullRomCurve3(leftCurvePoints),
