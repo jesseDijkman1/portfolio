@@ -1,16 +1,6 @@
 import * as THREE from "three";
 import { createNoise4D } from "simplex-noise";
 
-function vector3ArrayToFloat32BufferAttribute(arr: THREE.Vector3[]) {
-  const buffer = [];
-  for (let i = 0; i < arr.length; i++) {
-    const vector = arr[i].normalize();
-    buffer.push(vector.x, vector.y, vector.z);
-  }
-
-  return new THREE.Float32BufferAttribute(buffer, 3);
-}
-
 function ease(x: number): number {
   return x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
 }
@@ -111,6 +101,183 @@ class DNAPath {
   }
 }
 
+const particlesVertexShader = `
+  attribute float size;
+  attribute vec3 color;
+  uniform float time;
+  
+  varying vec3 vColor;
+  varying vec3 vPosition;
+
+  float mod289(float x){return x - floor(x * (1.0 / 289.0)) * 289.0;}
+  vec4 mod289(vec4 x){return x - floor(x * (1.0 / 289.0)) * 289.0;}
+  vec4 perm(vec4 x){return mod289(((x * 34.0) + 1.0) * x);}
+
+  float noise(vec3 p){
+    vec3 a = floor(p);
+    vec3 d = p - a;
+    d = d * d * (3.0 - 2.0 * d);
+
+    vec4 b = a.xxyy + vec4(0.0, 1.0, 0.0, 1.0);
+    vec4 k1 = perm(b.xyxy);
+    vec4 k2 = perm(k1.xyxy + b.zzww);
+
+    vec4 c = k2 + a.zzzz;
+    vec4 k3 = perm(c);
+    vec4 k4 = perm(c + 1.0);
+
+    vec4 o1 = fract(k3 * (1.0 / 41.0));
+    vec4 o2 = fract(k4 * (1.0 / 41.0));
+
+    vec4 o3 = o2 * d.z + o1 * (1.0 - d.z);
+    vec2 o4 = o3.yw * d.x + o3.xz * (1.0 - d.x);
+
+    return o4.y * d.y + o4.x * (1.0 - d.y);
+  }
+
+  void main() {
+    vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
+
+    float n = noise(vec3(mvPosition.xz, time));
+    gl_PointSize = size * n * ( 100.0 / -mvPosition.z ) ;
+    gl_Position = projectionMatrix * mvPosition;
+  
+    
+    
+    vPosition = mvPosition.xyz;
+    vColor = color;
+
+  }
+`;
+
+const particlesFragmentShader = `
+  float mod289(float x){return x - floor(x * (1.0 / 289.0)) * 289.0;}
+  vec4 mod289(vec4 x){return x - floor(x * (1.0 / 289.0)) * 289.0;}
+  vec4 perm(vec4 x){return mod289(((x * 34.0) + 1.0) * x);}
+
+  float noise(vec3 p){
+      vec3 a = floor(p);
+      vec3 d = p - a;
+      d = d * d * (3.0 - 2.0 * d);
+
+      vec4 b = a.xxyy + vec4(0.0, 1.0, 0.0, 1.0);
+      vec4 k1 = perm(b.xyxy);
+      vec4 k2 = perm(k1.xyxy + b.zzww);
+
+      vec4 c = k2 + a.zzzz;
+      vec4 k3 = perm(c);
+      vec4 k4 = perm(c + 1.0);
+
+      vec4 o1 = fract(k3 * (1.0 / 41.0));
+      vec4 o2 = fract(k4 * (1.0 / 41.0));
+
+      vec4 o3 = o2 * d.z + o1 * (1.0 - d.z);
+      vec2 o4 = o3.yw * d.x + o3.xz * (1.0 - d.x);
+
+      return o4.y * d.y + o4.x * (1.0 - d.y);
+  }
+
+  varying vec3 vColor;
+  varying vec3 vPosition;
+
+  uniform float time;
+
+  void main() {
+    if ( length( gl_PointCoord - vec2( 0.5, 0.5 ) ) > 0.475 ) discard;
+    float n = noise(vec3(vPosition.xz, time));
+    gl_FragColor = vec4(vColor, n );
+  }
+`;
+
+class DNAParticles {
+  private particles: Array<{
+    position: THREE.Vector3;
+    color: THREE.Color;
+    size: number;
+  }>;
+  private readonly geometry: THREE.BufferGeometry;
+  private readonly material: THREE.ShaderMaterial;
+  private readonly points: THREE.Points;
+
+  constructor() {
+    this.particles = [];
+
+    this.geometry = new THREE.BufferGeometry();
+    this.material = new THREE.ShaderMaterial({
+      vertexShader: particlesVertexShader,
+      fragmentShader: particlesFragmentShader,
+      blending: THREE.AdditiveBlending,
+      depthTest: true,
+      depthWrite: false,
+      uniforms: {
+        time: { value: 0 },
+      },
+      // transparent: true,
+      // vertexColors: true,
+    });
+
+    this.geometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute([], 3)
+    );
+    this.geometry.setAttribute(
+      "color",
+      new THREE.Float32BufferAttribute([], 3)
+    );
+    this.geometry.setAttribute(
+      "size",
+      new THREE.Float32BufferAttribute([], 1).setUsage(THREE.DynamicDrawUsage)
+    );
+
+    this.points = new THREE.Points(this.geometry, this.material);
+    this.points.frustumCulled = false;
+    // this.scene.add(this.points);
+  }
+
+  createParticle(position: THREE.Vector3, color: THREE.Color) {
+    this.particles.push({ position, color, size: 5 });
+  }
+
+  render(scene: THREE.Scene) {
+    scene.add(this.points);
+  }
+
+  update(timeElapsed: number) {
+    const positions: number[] = [];
+    const colors: number[] = [];
+    const sizes: number[] = [];
+
+    for (let i = 0; i < this.particles.length; i++) {
+      const { position, color, size } = this.particles[i];
+
+      positions.push(position.x, position.y, position.z);
+      colors.push(color.r, color.g, color.b);
+      sizes.push(size);
+    }
+
+    this.geometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(positions, 3)
+    );
+
+    this.geometry.setAttribute(
+      "color",
+      new THREE.Float32BufferAttribute(colors, 3)
+    );
+
+    this.geometry.setAttribute(
+      "size",
+      new THREE.Float32BufferAttribute(sizes, 1).setUsage(
+        THREE.DynamicDrawUsage
+      )
+    );
+    this.material.uniforms.time.value = timeElapsed / 1000;
+
+    // this.geometry.attributes.position.needsUpdate = true;
+    // this.geometry.attributes.size.needsUpdate = true;
+  }
+}
+
 const vertexShader = `
   varying vec3 vUv; 
   varying vec3 vPosition; 
@@ -139,7 +306,7 @@ const fragmentShader = `
     float z = min(1.0, max(vPosition.z / 2.0 + 1., 0.0));
 
     vec3 lightColor = mix(colorLight, colorHighlight, smoothstep(1.0, 0.5, vNormal.z));
-    vec3 darkColor = mix(colorDark, colorHighlight, smoothstep(1.0, 0.5, vNormal.z));
+    vec3 darkColor = mix(colorDark, colorHighlight,  smoothstep(1.0, 0.5, z));
 
     gl_FragColor = vec4(mix(darkColor, lightColor, z).xyz, 1.0);
   }
@@ -153,6 +320,8 @@ class DNA {
   private readonly tubeRadius: number;
 
   private readonly path: DNAPath;
+  private readonly particles: DNAParticles;
+
   private readonly materialGreen: THREE.LineBasicMaterial;
   private readonly materialRed: THREE.LineBasicMaterial;
 
@@ -168,7 +337,9 @@ class DNA {
     this.length = 100;
     this.tubeRadius = 0.2;
     this.sphereRadius = 0.6;
+
     this.path = new DNAPath(100, camera);
+    this.particles = new DNAParticles();
 
     this.materialGreen = new THREE.LineBasicMaterial({ color: 0x00ff00 });
     this.materialRed = new THREE.LineBasicMaterial({ color: 0xff0000 });
@@ -220,6 +391,15 @@ class DNA {
       const quaternion = new THREE.Quaternion();
       quaternion.setFromAxisAngle(curvePointTangent, angle);
 
+      this.particles.createParticle(
+        new THREE.Vector3(
+          0,
+          curvePointPosition.y,
+          Math.random() * 100
+        ).applyQuaternion(quaternion),
+        new THREE.Color(0xffffff)
+      );
+
       const leftCurvePoint = curvePointPosition
         .clone()
         .add(new THREE.Vector3(0, 0, this.radius).applyQuaternion(quaternion));
@@ -265,6 +445,8 @@ class DNA {
       connectionLines.push(connectionLine);
 
       scene.add(connectionLine);
+
+      this.particles.render(scene);
     }
 
     const leftCurveGeometry = new THREE.TubeGeometry(
@@ -348,14 +530,6 @@ class DNA {
       false
     );
 
-    console.log(this.leftCurveLine);
-    // this.leftCurveLine.geometry.computeVertexNormals();
-
-    // this.leftCurveLine.geometry.setAttribute(
-    //   "normals",
-    //   vector3ArrayToFloat32BufferAttribute(this.leftCurveLine.geometry.normals)
-    // );
-
     this.rightCurveLine.geometry.dispose();
     this.rightCurveLine.geometry = new THREE.TubeGeometry(
       new THREE.CatmullRomCurve3(rightCurvePoints),
@@ -364,13 +538,8 @@ class DNA {
       4,
       false
     );
-    // this.rightCurveLine.geometry.computeVertexNormals();
-    // this.rightCurveLine.geometry.setAttribute(
-    //   "normals",
-    //   vector3ArrayToFloat32BufferAttribute(this.rightCurveLine.geometry.normals)
-    // );
 
-    // updateCurveLines()
+    this.particles.update(timeElapsed);
   }
 }
 
