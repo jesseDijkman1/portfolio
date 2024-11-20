@@ -33,16 +33,18 @@ const curvePath = new CurvePath(
   10
 );
 
-curvePath.addPointsTransformer("gravitateToCamera", (point, state) => {
+curvePath.addPointsTransformer("gravitateToCamera", (point, { strength }) => {
   const dist = getDistance2D(point, camera.position);
   const offsetN = Math.pow((100 - dist) / 50, 3);
-  console.log("F", state.stateTransferProgress);
+
+  const s = ease(strength);
+
   return point
-    .setX(point.x + 30 * offsetN * state.stateTransferProgress)
-    .setZ(point.z + 10 * offsetN * state.stateTransferProgress);
+    .setX(point.x + 30 * offsetN * s)
+    .setZ(point.z + 10 * offsetN * s);
 });
 
-curvePath.addPointsTransformer("applyNoiseX", (point, state) => {
+curvePath.addPointsTransformer("applyNoiseX", (point, { state, strength }) => {
   const noiseValue = getNoise4D(
     point.x / 100,
     point.y / 100,
@@ -50,7 +52,9 @@ curvePath.addPointsTransformer("applyNoiseX", (point, state) => {
     state.timeElapsed
   );
 
-  return point.setX(point.x + 15 * noiseValue * state.stateTransferProgress);
+  const s = ease(strength);
+
+  return point.setX(point.x + 15 * noiseValue * s);
 });
 
 curvePath.definePipeline("start", ["gravitateToCamera", "applyNoiseX"], true);

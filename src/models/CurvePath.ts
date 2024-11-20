@@ -1,12 +1,15 @@
 import * as THREE from "three";
+import { ease } from "../lib/utils";
 
 class CurvePath {
   private transformers: Record<string, any>;
   private pipelines: Record<string, any>;
   private state: Record<string, any>;
-  private updateFunction: ((points: THREE.Vector3[]) => THREE.Vector3[]) | null;
+  private updateFunction:
+    | ((points: THREE.Vector3[], strength: number) => THREE.Vector3[])
+    | null;
   private nextUpdateFunction:
-    | ((points: THREE.Vector3[]) => THREE.Vector3[])
+    | ((points: THREE.Vector3[], strength: number) => THREE.Vector3[])
     | null;
   private points: THREE.Vector3[];
 
@@ -51,7 +54,23 @@ class CurvePath {
       }
     }
 
-    this.points = this.updateFunction(this.initialPoints);
+    if (this.nextUpdateFunction) {
+      const p1 = this.updateFunction(
+        this.initialPoints,
+        this.state.stateTransferProgress
+      );
+      this.points = this.nextUpdateFunction(
+        p1,
+        1 - this.state.stateTransferProgress
+      );
+    } else {
+      this.points = this.updateFunction(
+        this.initialPoints,
+        this.state.stateTransferProgress
+      );
+    }
+
+    // this.points = this.updateFunction(this.initialPoints);
   }
 
   public setPipeline(name: string) {
@@ -63,9 +82,10 @@ class CurvePath {
     transformers: string[],
     isDefault: boolean = false
   ) {
-    this.pipelines[name] = (points: THREE.Vector3[]) =>
+    this.pipelines[name] = (points: THREE.Vector3[], strength: number) =>
       transformers.reduce(
-        (points, transformerName) => this.transformers[transformerName](points),
+        (points, transformerName) =>
+          this.transformers[transformerName](points, strength),
         points.map((point) => point.clone())
       );
 
@@ -81,8 +101,10 @@ class CurvePath {
       state: CurvePath["state"]
     ) => THREE.Vector3
   ) {
-    this.transformers[name] = (points: THREE.Vector3[]) =>
-      points.map((point) => transformerFn(point, this.state));
+    this.transformers[name] = (points: THREE.Vector3[], strength: number) =>
+      points.map((point) =>
+        transformerFn(point, { state: this.state, strength })
+      );
   }
 
   public getPoints() {
